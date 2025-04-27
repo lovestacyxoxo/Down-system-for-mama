@@ -1,112 +1,100 @@
-local Players  = game:GetService("Players")
-local Lighting = game:GetService("Lighting")
+local Players = game:GetService("Players")
+local player  = Players.LocalPlayer
+local char    = player.Character or player.CharacterAdded:Wait()
 
-local player = Players.LocalPlayer
+-- stats container
+local pv = char:WaitForChild("pv")
+local bd = pv:WaitForChild("bd")
+local hp = pv:WaitForChild("hp")
 
--- this function does all the setup per‐character
-local function onCharacter(char)
-    local pv = char:WaitForChild("pv")
-    local bd = pv:WaitForChild("bd")
-    local hp = pv:WaitForChild("hp")
+-- reset bleed-down and grab Humanoid
+bd.Value = 250
+local humanoid = char:WaitForChild("Humanoid")
+local origHipHeight = humanoid.HipHeight
 
-    -- **RESET bd TO 250** whenever you spawn
-    bd.Value = 250
+-- GUI setup
+local screenGui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
+screenGui.ResetOnSpawn = false
 
-    -- store original fog
-    local origFogStart, origFogEnd = Lighting.FogStart, Lighting.FogEnd
+local staminaBar = Instance.new("Frame", screenGui)
+staminaBar.Size       = UDim2.new(0,200,0,20)
+staminaBar.Position   = UDim2.new(0.5,-100,0.7,0)
+staminaBar.BackgroundColor3 = Color3.new(0,0,0)
+staminaBar.Visible    = false
 
-    -- GUI (will persist across respawns because ResetOnSpawn=false)
-    local screenGui = player:WaitForChild("PlayerGui"):FindFirstChild("ReviveGui")
-    if screenGui then screenGui:Destroy() end
+local fillBar = Instance.new("Frame", staminaBar)
+fillBar.Size             = UDim2.new(0,0,1,0)
+fillBar.BackgroundColor3 = Color3.new(0,1,0)
 
-    screenGui = Instance.new("ScreenGui")
-    screenGui.Name = "ReviveGui"
-    screenGui.ResetOnSpawn = false
-    screenGui.Parent = player.PlayerGui
-
-    local reviveBar = Instance.new("Frame", screenGui)
-    reviveBar.Size     = UDim2.new(0,200,0,20)
-    reviveBar.Position = UDim2.new(0.5,-100,0.7,0)
-    reviveBar.BackgroundColor3 = Color3.new(0,0,0)
-    reviveBar.Visible = false
-
-    local fill = Instance.new("Frame", reviveBar)
-    fill.Size             = UDim2.new(0,0,1,0)
-    fill.BackgroundColor3 = Color3.new(0,1,0)
-
-    local function someoneNearby()
-        local root = char:FindFirstChild("HumanoidRootPart")
-        if not root then return false end
-        for _, other in ipairs(Players:GetPlayers()) do
-            if other~=player and other.Character then
-                local oroot = other.Character:FindFirstChild("HumanoidRootPart")
-                if oroot and (root.Position - oroot.Position).Magnitude <= 10 then
-                    return true
-                end
+-- helper to see if any other player is within 10 studs
+local function helperIsNear()
+    local root = char:FindFirstChild("HumanoidRootPart")
+    if not root then return false end
+    for _, other in ipairs(Players:GetPlayers()) do
+        if other~=player and other.Character then
+            local oroot = other.Character:FindFirstChild("HumanoidRootPart")
+            if oroot and (root.Position - oroot.Position).Magnitude <= 10 then
+                return true
             end
         end
-        return false
     end
+    return false
+end
 
-    -- bleed‐down
-    local draining = false
-    local function drainBD()
-        draining = true
-        while hp.Value==0 and bd.Value>0 do
-            bd.Value = bd.Value - 1
-            wait(0.1)
-        end
-        if hp.Value==0 then bd.Value = -100 end
-        draining = false
+-- drain bd and force low HipHeight
+local function drainBD()
+    humanoid.HipHeight = 0.2
+    while hp.Value == 0 and bd.Value > 0 do
+        bd.Value = bd.Value - 1
+        wait(0.1)
     end
+    if hp.Value == 0 then
+        bd.Value = -100
+    end
+end
 
-    -- revive loop
-    local function handleRevive()
-        local elapsed = 0
-        local needed  = 5
+-- fill the revive bar only when someone’s near
+local function fillStamina()
+    local fill = 0
+    local barVisible = false
 
-        reviveBar.Visible = true
-        fill.Size = UDim2.new(0,0,1,0)
-
-        while hp.Value==0 and bd.Value>0 do
-            if someoneNearby() then
-                elapsed = elapsed + 0.1
-                fill.Size = UDim2.new(math.clamp(elapsed/needed,0,1),0,1,0)
-                if elapsed >= needed then
-                    hp.Value = 35
-                    -- restore fog + kill blur
-                    Lighting.FogStart, Lighting.FogEnd = origFogStart, origFogEnd
-                    local blur = Lighting:FindFirstChildOfClass("BlurEffect")
-                    if blur then blur.Enabled = false end
-                    break
-                end
-            else
-                -- reset if they walk away
-                elapsed = 0
-                reviveBar.Visible = false
-                fill.Size = UDim2.new(0,0,1,0)
-                repeat wait(0.1) until someoneNearby() or hp.Value~=0 or bd.Value<=0
-                if hp.Value==0 and bd.Value>0 then
-                    reviveBar.Visible = true
-                end
+    while hp.Value == 0 do
+        if helperIsNear() then
+            if not barVisible then
+                staminaBar.Visible = true
+                barVisible = true
             end
-            wait(0.1)
-        end
 
-        reviveBar.Visible = false
+            fill = fill + 1
+            fillBar.Size = UDim2.new(fill/50, 0, 1, 0)
+
+            if fill >= 50 then
+                -- revive!
+                hp.Value = 35
+                humanoid.HipHeight = origHipHeight
+                staminaBar.Visible = false
+                return
+            end
+        else
+            if barVisible then
+                staminaBar.Visible = false
+                barVisible = false
+            end
+            fill = 0
+            fillBar.Size = UDim2.new(0, 0, 1, 0)
+        end
+        wait(0.1)
     end
 
-    -- hook up
-    hp:GetPropertyChangedSignal("Value"):Connect(function()
-        if hp.Value==0 and not draining then
-            spawn(drainBD)
-            spawn(handleRevive)
-        end
-    end)
+    -- clean up if hp changes out of loop
+    staminaBar.Visible = false
+    humanoid.HipHeight = origHipHeight
 end
 
--- connect on spawn and initial
-player.CharacterAdded:Connect(onCharacter)
-if player.Character then
-    onCharacter(player.Character)
-end
+-- hook up drain + revive when hp hits zero
+hp:GetPropertyChangedSignal("Value"):Connect(function()
+    if hp.Value == 0 then
+        spawn(drainBD)
+        spawn(fillStamina)
+    end
+end)
