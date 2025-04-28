@@ -7,31 +7,62 @@ local pv = char:WaitForChild("pv")
 local bd = pv:WaitForChild("bd")
 local hp = pv:WaitForChild("hp")
 
--- reset bleed-down and grab Humanoid
+-- one‐time revive guard
+local hasRevived = false
+
+-- reset bleed‐down and grab Humanoid
 bd.Value = 250
 local humanoid = char:WaitForChild("Humanoid")
 local origHipHeight = humanoid.HipHeight
 
 -- GUI setup
-local screenGui = Instance.new("ScreenGui", player:WaitForChild("PlayerGui"))
+local screenGui = Instance.new("ScreenGui")
+screenGui.Name       = "ReviveGui"
+screenGui.Parent     = player:WaitForChild("PlayerGui")
 screenGui.ResetOnSpawn = false
 
-local staminaBar = Instance.new("Frame", screenGui)
-staminaBar.Size       = UDim2.new(0,200,0,20)
-staminaBar.Position   = UDim2.new(0.5,-100,0.7,0)
-staminaBar.BackgroundColor3 = Color3.new(0,0,0)
-staminaBar.Visible    = false
+-- background bar
+local staminaBar = Instance.new("Frame")
+staminaBar.Name             = "StaminaBar"
+staminaBar.Size             = UDim2.new(0, 200, 0, 20)
+staminaBar.Position         = UDim2.new(0.5, -100, 0.7, 0)
+staminaBar.BackgroundColor3 = Color3.new(0, 0, 0)
+staminaBar.Visible          = false
+staminaBar.Parent           = screenGui
 
-local fillBar = Instance.new("Frame", staminaBar)
-fillBar.Size             = UDim2.new(0,0,1,0)
-fillBar.BackgroundColor3 = Color3.new(0,1,0)
+-- gradient: black → gray → black
+local barGradient = Instance.new("UIGradient")
+barGradient.Color = ColorSequence.new{
+    ColorSequenceKeypoint.new(0,   Color3.new(0,   0,   0)),
+    ColorSequenceKeypoint.new(0.5, Color3.new(0.5, 0.5, 0.5)),
+    ColorSequenceKeypoint.new(1,   Color3.new(0,   0,   0)),
+}
+barGradient.Rotation = 90
+barGradient.Parent = staminaBar
 
--- helper to see if any other player is within 10 studs
+-- gray outline
+local barStroke = Instance.new("UIStroke")
+barStroke.Color  = Color3.new(0.5, 0.5, 0.5)
+barStroke.Parent = staminaBar
+
+-- fill bar
+local fillBar = Instance.new("Frame")
+fillBar.Name             = "FillBar"
+fillBar.Size             = UDim2.new(0, 0, 1, 0)
+fillBar.BackgroundColor3 = Color3.new(1, 1, 1)  -- white fill
+fillBar.Parent           = staminaBar
+
+-- outline on fill as well
+local fillStroke = Instance.new("UIStroke")
+fillStroke.Color  = Color3.new(0.5, 0.5, 0.5)
+fillStroke.Parent = fillBar
+
+-- helper to see if another player is within 10 studs
 local function helperIsNear()
     local root = char:FindFirstChild("HumanoidRootPart")
     if not root then return false end
     for _, other in ipairs(Players:GetPlayers()) do
-        if other~=player and other.Character then
+        if other ~= player and other.Character then
             local oroot = other.Character:FindFirstChild("HumanoidRootPart")
             if oroot and (root.Position - oroot.Position).Magnitude <= 10 then
                 return true
@@ -69,10 +100,19 @@ local function fillStamina()
             fillBar.Size = UDim2.new(fill/50, 0, 1, 0)
 
             if fill >= 50 then
-                -- revive!
-                hp.Value = 35
+                -- stop all current animations
+                for _, track in ipairs(humanoid:GetPlayingAnimationTracks()) do
+                    track:Stop()
+                end
+
+                -- first (and only) revive
+                hp.Value        = 35
                 humanoid.HipHeight = origHipHeight
-                staminaBar.Visible = false
+                bd.Value        = 0            -- no more bleed‐down
+                hasRevived      = true         -- disable further revives
+
+                -- remove the UI so it can't appear again
+                screenGui:Destroy()
                 return
             end
         else
@@ -87,13 +127,15 @@ local function fillStamina()
     end
 
     -- clean up if hp changes out of loop
-    staminaBar.Visible = false
-    humanoid.HipHeight = origHipHeight
+    if not hasRevived then
+        staminaBar.Visible = false
+        humanoid.HipHeight = origHipHeight
+    end
 end
 
--- hook up drain + revive when hp hits zero
+-- hook up drain + revive when hp hits zero, only if not yet revived
 hp:GetPropertyChangedSignal("Value"):Connect(function()
-    if hp.Value == 0 then
+    if hp.Value == 0 and not hasRevived then
         spawn(drainBD)
         spawn(fillStamina)
     end
